@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"runtime"
+	"bytes"
 
 	"github.com/Azure/golua/lua/binary"
 	"github.com/Azure/golua/lua/syntax"
@@ -55,6 +57,7 @@ type (
 		global *global
 		base   Frame // base call frame
 		calls  int   // call count
+		syncCallState *State
 	}
 
 	// 'global state', shared by all threads of a main state.
@@ -64,7 +67,7 @@ type (
 		registry *table
 		thread0  *State
 		config   *config
-		panicFn  Func
+		panicFn  PanicFunc
 	}
 )
 
@@ -101,6 +104,25 @@ func NewState(opts ...Option) *State {
 	return state
 }
 
+func NewStateFromState(s *State) *State {
+	return s
+}
+
+func (state *State) SetSyncCallState(s *State) {
+	state.syncCallState = s
+}
+
+func (state *State) ClearSyncCallState() {
+	state.syncCallState = nil
+}
+
+func (state *State) CheckSyncCallState(s *State) bool {
+	if state.syncCallState==nil{
+		return false
+	}
+	return state.syncCallState == s
+}
+
 // String returns a printable string of the current executing thread state.
 func (ls *State) String() string { return fmt.Sprintf("%p", ls) }
 
@@ -135,7 +157,14 @@ func (state *State) errorf(format string, args ...interface{}) int {
 // error object. This function panics, and never returns.
 //
 // See https://www.lua.org/manual/5.3/manual.html#lua_error
-func (state *State) panic(err error) int { panic(err) }
+func (state *State) panic(err error) int {
+	if state.global.panicFn!=nil{
+		state.global.panicFn(state, err)
+	}else{
+		panic(err)
+	}
+	return 0
+}
 
 // enter enters a new call frame.
 func (state *State) enter(fr *Frame) *Frame {
@@ -293,7 +322,10 @@ func (state *State) load(filename string, source interface{}) (*Closure, error) 
 		src []byte
 		err error
 	)
-	if src, err = syntax.Source(filename, source); err != nil {
+	if strings.HasSuffix(filename, ".lua"){
+		dummy := [1]byte{}
+		src = dummy[:]
+	}else if src, err = syntax.Source(filename, source); err != nil {
 		return nil, err
 	}
 	if !binary.IsChunk(src) {
@@ -302,8 +334,17 @@ func (state *State) load(filename string, source interface{}) (*Closure, error) 
 			return nil, err
 		}
 		tmp := filepath.Join(dir, "glua.bin")
-		cmd := exec.Command("luac", "-o", tmp, "-")
-		cmd.Stdin = strings.NewReader(string(src))
+		var cmd *exec.Cmd
+		binaryName := "luac"
+		if runtime.GOOS == "windows" {
+			binaryName = "luac.exe"
+		}
+		if filename=="?"{
+			cmd = exec.Command(binaryName, "-o", tmp, "-")
+			cmd.Stdin = bytes.NewReader(src)
+		}else{
+			cmd = exec.Command(binaryName, "-o", tmp, filename)
+		}
 
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -315,7 +356,7 @@ func (state *State) load(filename string, source interface{}) (*Closure, error) 
 		}
 	}
 
-	chunk, err := binary.Load(src)
+	chunk, err := binary.Load(filename, src)
 	if err != nil {
 		return nil, err
 	}

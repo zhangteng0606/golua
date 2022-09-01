@@ -2,6 +2,8 @@ package lua
 
 import (
 	"fmt"
+	"github.com/Azure/golua/lua/binary"
+	"github.com/Azure/golua/lua/vm"
 	"os"
 	"reflect"
 	"runtime"
@@ -332,4 +334,214 @@ func chunkID(source string) string {
 		}
 	}
 	return source
+}
+
+func filterpc(pc int, jmptarget int) int {
+	if pc < jmptarget {
+		return -1
+	} else {
+		return pc
+	}
+}
+func findsetreg(proto *binary.Prototype, lastpc int, reg int) int {
+	var pc int = 0
+	var setreg int = -1
+	var jmptarget int = 0
+	for pc = 0; pc < lastpc; pc++ {
+		instr := vm.Instr(proto.Code[pc])
+		a := instr.A()
+		code := instr.Code()
+		switch code {
+		case vm.LOADNIL:
+			b := instr.B()
+			if a <= reg && reg <= a+b {
+				setreg = filterpc(pc, jmptarget)
+			}
+			break
+		case vm.TFORCALL:
+			if reg >= a+2 {
+				setreg = filterpc(pc, jmptarget)
+			}
+			break
+		case vm.CALL, vm.TAILCALL:
+			if reg >= a {
+				setreg = filterpc(pc, jmptarget)
+			}
+			break
+		case vm.JMP:
+			b := instr.SBX()
+			dest := pc + 1 + b
+			if pc < dest && dest <= lastpc {
+				if dest > jmptarget {
+					jmptarget = dest
+				}
+			}
+			break
+		default:
+			mask := code.Mask()
+			if mask.SetA() && reg == a {
+				setreg = filterpc(pc, jmptarget)
+			}
+			break
+		}
+	}
+	return setreg
+}
+
+func getlocalname(proto *binary.Prototype, localNumber int, pc int) (string, bool) {
+	for _, v := range proto.Locals {
+		if int(v.Live) > pc {
+			break
+		}
+		if pc < int(v.Dead) {
+			localNumber--
+			if localNumber == 0 {
+				return v.Name, true
+			}
+		}
+	}
+	return "", false
+}
+
+func upvalname(proto *binary.Prototype, uv int) string {
+	if uv < len(proto.UpNames) {
+		return proto.UpNames[uv]
+	}
+	return "?"
+}
+
+func kname(proto *binary.Prototype, pc int, reg int) string {
+	if reg > 0xFF { //reg is constant
+		v := proto.Consts[reg&0xFF]
+		name, ok := v.(string)
+		if ok { //if const v is string, it is its name
+			return name
+		}
+	} else { //reg is register;
+		what, name := getobjname(proto, pc, reg)
+		if what[0] == 'c' {
+			return name
+		}
+	}
+	return "?"
+}
+
+func getobjname(proto *binary.Prototype, lastpc int, reg int) (name, what string) {
+	lname, found := getlocalname(proto, reg+1, lastpc)
+	if found {
+		name, what = lname, "local"
+		return
+	}
+
+	pc := findsetreg(proto, lastpc, reg)
+	if pc != -1 {
+		instr := vm.Instr(proto.Code[pc])
+		op := instr.Code()
+		switch op {
+		case vm.MOVE:
+			b := instr.B()
+			if b < instr.A() {
+				return getobjname(proto, pc, b)
+			}
+			break
+		case vm.GETTABUP, vm.GETTABLE:
+			k := instr.C()
+			t := instr.B()
+			vn := ""
+			if op == vm.GETTABLE {
+				vn, _ = getlocalname(proto, t+1, pc)
+			} else {
+				vn = upvalname(proto, t)
+			}
+			kn := kname(proto, pc, k)
+			if vn == "_ENV" {
+				return kn, "global"
+			} else {
+				return kname(proto, pc, k), "field"
+			}
+		case vm.GETUPVAL:
+			return upvalname(proto, instr.B()), "upvalue"
+		case vm.LOADK, vm.LOADKX:
+			b := instr.B()
+			if op != vm.LOADK {
+				nextOp := vm.Instr(proto.Code[pc+1])
+				b = nextOp.AX()
+			}
+			kv := proto.Const(b)
+			if sv, ok := kv.(string); ok {
+				return sv, "constant"
+			}
+			break
+		case vm.SELF:
+			k := instr.C()
+			return kname(proto, pc, k), "method"
+		default:
+			break
+		}
+	}
+	return "", ""
+}
+
+func funcnamefromcode(state *State, frame *Frame) (name, what string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if e, ok := r.(error); ok {
+				err = e
+			}
+		}
+	}()
+	if frame==nil{
+		name = "?"
+		return
+	}
+
+	if frame.closure.isGo() {
+		name, what = funcname(frame, frame.closure)
+		return
+	}
+	proto := frame.closure.binary
+	pc := frame.pc - 1
+	instr := vm.Instr(proto.Code[pc])
+	op := instr.Code()
+	switch op {
+	case vm.CALL, vm.TAILCALL:
+		name, what = getobjname(proto, pc, instr.A())
+		return
+	case vm.TFORCALL:
+		name, what = "for iterator", "for iterator"
+		return
+	case vm.SELF, vm.GETTABUP, vm.GETTABLE:
+		name, what = "__index", "metamethod"
+		return
+	case vm.SETTABUP, vm.SETTABLE:
+		name, what = "__newindex", "metamethod"
+		return
+	case vm.ADD, vm.SUB, vm.MUL, vm.MOD, vm.POW, vm.DIV, vm.IDIV, vm.BAND, vm.BOR, vm.BXOR, vm.SHL, vm.SHR:
+		name, what = "op", "metamethod"
+		return
+	case vm.UNM:
+		name, what = "unm", "metamethod"
+		return
+	case vm.BNOT:
+		name, what = "bnot", "metamethod"
+		return
+	case vm.LEN:
+		name, what = "len", "metamethod"
+		return
+	case vm.CONCAT:
+		name, what = "concat", "metamethod"
+		return
+	case vm.EQ:
+		name, what = "eq", "metamethod"
+		return
+	case vm.LT:
+		name, what = "lt", "metamethod"
+		return
+	case vm.LE:
+		name, what = "le", "metamethod"
+		return
+	default:
+		name, what = "", ""
+	}
+	return
 }

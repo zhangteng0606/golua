@@ -83,10 +83,56 @@ func (state *State) Register(name string, fn Func) {
 // AtPanic sets a new panic function and returns the old one (see §4.6).
 //
 // See https://www.lua.org/manual/5.3/manual.html#lua_atpanic
-func (state *State) AtPanic(panicFn Func) Func {
+func (state *State) AtPanic(panicFn PanicFunc) PanicFunc {
 	prevFn := state.global.panicFn
 	state.global.panicFn = panicFn
 	return prevFn
+}
+
+func (state *State) GetLocals() []Value {
+	return state.frame().locals
+}
+
+func (state *State) GetTraceback() []string {
+	topFrame := state.frame()
+	if topFrame==nil || topFrame.depth<1{
+		return nil
+	}
+	f := topFrame
+	rets := make([]string, 0, topFrame.depth)
+	if f==nil{
+		return append(rets, fmt.Sprintf("get call stack error: %d", topFrame.depth))
+	}
+	for{
+		if f==nil || f.depth==0{
+			break
+		}
+
+		if f.closure.isLua(){
+			ci := f.pc-1
+			if ci<0{
+				ci = 0
+			}
+			b := f.closure.binary
+			var pf *Frame = nil
+			if f.depth>1{
+				pf = f.prev
+			}
+			fname, _, err := funcnamefromcode(state, pf)
+			if err!=nil {
+				rets=append(rets, fmt.Sprintf("%s:%d function name failed(%s)", b.Source, b.PcLnTab[ci], err.Error()))
+			}else {
+				rets = append(rets, fmt.Sprintf("%s:%d in %s", b.Source, b.PcLnTab[ci], fname))
+			}
+		}else{
+			n := f.closure.native
+			rets=append(rets, fmt.Sprintf("%s", n.String()))
+		}
+
+		f = f.prev
+	}
+
+	return rets
 }
 
 // Status returns the status of the thread.
@@ -211,6 +257,15 @@ func (state *State) NewTableSize(narr, nrec int) {
 // It is equivalent to lua_createtable(L, 0, 0).
 func (state *State) NewTable() { state.NewTableSize(0, 0) }
 
+//Copy a table from another x.state to state, x should be readonly.
+func (state *State) NewTableFromTableAcrossState(x Table) {
+	t, ok := x.(*table)
+	if !ok{
+		state.errorf("copy readonly table across states failed: table expected")
+		return
+	}
+	state.frame().push(newTableFromTable(state, t))
+}
 // Next pops a key from the stack, and pushes a key-value pair from the table at the given index
 // (the "next" pair after the given key). If there are no more elements in the table, then Next
 // returns false (and pushes nothing).
@@ -264,8 +319,8 @@ func (state *State) SetMetaTableAt(index int) {
 // See https://www.lua.org/manual/5.3/manual.html#lua_gettable
 func (state *State) GetTable(index int) Type {
 	var (
-		key = state.frame().pop()
 		obj = state.get(index)
+		key = state.frame().pop()
 	)
 	val := state.gettable(obj, key, false)
 	state.frame().push(val)
@@ -281,9 +336,9 @@ func (state *State) GetTable(index int) Type {
 // See https://www.lua.org/manual/5.3/manual.html#lua_settable
 func (state *State) SetTable(index int) {
 	var (
+		obj = state.get(index)
 		val = state.frame().pop()
 		key = state.frame().pop()
-		obj = state.get(index)
 	)
 	state.settable(obj, key, val, false)
 }
@@ -351,8 +406,8 @@ func (state *State) SetIndex(index int, entry int64) {
 // See https://www.lua.org/manual/5.3/manual.html#lua_rawget
 func (state *State) RawGet(index int) Type {
 	var (
-		key = state.frame().pop()
 		obj = state.get(index)
+		key = state.frame().pop()
 	)
 	val := state.gettable(obj, key, true)
 	state.frame().push(val)
@@ -364,9 +419,9 @@ func (state *State) RawGet(index int) Type {
 // See https://www.lua.org/manual/5.3/manual.html#lua_rawset
 func (state *State) RawSet(index int) {
 	var (
+		obj = state.get(index)
 		val = state.frame().pop()
 		key = state.frame().pop()
-		obj = state.get(index)
 	)
 	state.settable(obj, key, val, true)
 }
@@ -524,7 +579,12 @@ func (state *State) Call(args, rets int) {
 
 	if !ok {
 		if !tryMetaCall(state, value, funcID, args, rets) {
-			state.errorf("attempt to call a %s value @ %d (%T)\n%v\n", value.Type(), funcID, value, state.frame().locals)
+			funName, _, err := funcnamefromcode(state, state.frame())
+			if err!=nil{
+				state.errorf("attempt to call a %s value (function name failed: %s) @ %d (%T)\n%v", value.Type(), err.Error(), funcID, value, state.frame().locals)
+			}else{
+				state.errorf("attempt to call a %s value (field: %s) @ %d (%T)\n%v", value.Type(), funName, funcID, value, state.frame().locals)
+			}
 		}
 	} else {
 		state.call(&Frame{closure: c, fnID: funcID, rets: rets})

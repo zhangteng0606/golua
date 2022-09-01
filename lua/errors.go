@@ -6,7 +6,7 @@ import (
 
 func argError(state *State, argAt int, msg string) {
 	// TODO: stack analysis and debugging info if available.
-	panic(fmt.Errorf("bad argument #%d (%s)", argAt, msg))
+	state.panic(fmt.Errorf("bad argument #%d (%s)", argAt, msg))
 }
 
 func intError(state *State, argAt int) {
@@ -18,7 +18,7 @@ func intError(state *State, argAt int) {
 
 func typeError(state *State, argAt int, want string) {
 	// TODO: stack analysis and debugging info if available.
-	panic(fmt.Errorf("%s expected @ %d, got %s", want, argAt, state.valueAt(argAt).Type()))
+	state.panic(fmt.Errorf("%s expected @ %d, got %s", want, argAt, state.valueAt(argAt).Type()))
 }
 
 // luaG_typerror 		"attempt to %s a %s value%s"

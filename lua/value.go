@@ -76,10 +76,11 @@ func (x *Object) Type() Type         { return UserDataType }
 
 type Table interface {
 	Value
-
+	TotalLength() int
 	Length() int
 	Index(index Value) Value
 	ForEach(func(key, value Value))
+	MetaTable() Table
 }
 
 type Float float64
@@ -112,6 +113,7 @@ func (Int) number()          {}
 type Nil byte
 
 const None = Nil(0)
+const NIL = Nil(1)
 
 func (x Nil) String() string { return "nil" }
 func (x Nil) Type() Type {
@@ -122,6 +124,7 @@ func (x Nil) Type() Type {
 }
 
 type Func func(*State) int
+type PanicFunc func(*State, error) int
 
 // func (x Func) Call(state *State) int {
 // 	return x(state)
@@ -168,6 +171,18 @@ func valueOf(state *State, value interface{}) Value {
 		return Int(value)
 	case int32:
 		return Int(int64(value))
+	case int16:
+		return Int(int64(value))
+	case int8:
+		return Int(int64(value))
+	case uint64:
+		return Int(value)
+	case uint32:
+		return Int(int64(value))
+	case uint16:
+		return Int(int64(value))
+	case uint8:
+		return Int(int64(value))
 	case int:
 		return Int(int64(value))
 	case bool:
@@ -189,6 +204,7 @@ func IsNone(value Value) bool {
 	return value == nil || value == None || !isNil(value) || value.Type() == NilType
 }
 func isNil(value Value) bool { return reflect.ValueOf(value).IsValid() } //IsNil() }
+func IsNilType(t Type) bool {return t==NilType || t==NoneType}
 
 func Truth(value Value) bool { return bool(truth(value)) }
 

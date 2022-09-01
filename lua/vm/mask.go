@@ -76,9 +76,9 @@ func (mask Mask) C(carg ArgMask) bool { return carg == ArgMask((mask>>2)&3) }
 
 func (mask Mask) Mode() Mode { return Mode(mask & 3) }
 
-func (mask Mask) SetA() bool { return mask&(1<<6) == 1 }
+func (mask Mask) SetA() bool { return mask&(1<<6) != 0 }
 
-func (mask Mask) Test() bool { return mask&(1<<7) == 1 }
+func (mask Mask) Test() bool { return mask&(1<<7) != 0 }
 
 func mask(t, a uint8, b, c ArgMask, m Mode) Mask {
 	return Mask((((t) << 7) | ((a) << 6) | ((uint8(b)) << 4) | ((uint8(c)) << 2) | (uint8(m))))

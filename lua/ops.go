@@ -375,7 +375,7 @@ func (state *State) arith(op Op, x, y Value) Value {
 		// try __mod
 		event = metaMod
 
-	case OpQuo: // '/'
+	case OpQuo: // '//'
 		if isInteger(x) && isInteger(y) {
 			m, _ := toInteger(x)
 			n, _ := toInteger(y)
@@ -383,7 +383,7 @@ func (state *State) arith(op Op, x, y Value) Value {
 				panic(fmt.Errorf("attempt to divide by zero"))
 			}
 			if n == -1 {
-				return m
+				return -m
 			}
 			q := m / n
 			if (m^n) < 0 && m%n != 0 {
@@ -400,7 +400,7 @@ func (state *State) arith(op Op, x, y Value) Value {
 		// try __idiv
 		event = metaIdiv
 
-	case OpDiv: // '//'
+	case OpDiv: // '/'
 		if n1, ok := toFloat(x); ok {
 			if n2, ok := toFloat(y); ok {
 				return n1 / n2

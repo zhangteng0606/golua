@@ -42,6 +42,7 @@ type table struct {
 }
 
 func (x *table) String() string { return fmt.Sprintf("table: %p", x) }
+func (x *table) TotalLength() int { return len(x.hash)+len(x.list)}
 func (x *table) Length() int    { return len(x.list) }
 func (x *table) Type() Type     { return TableType }
 
@@ -62,6 +63,10 @@ func (x *table) Index(index Value) Value {
 	return x.get(index)
 }
 
+func (x *table) MetaTable() Table {
+	return x.meta
+}
+
 // newtable returns a new table initialized using the provided sizes
 // arrayN and hashN to create the underlying hash and array part.
 func newTable(state *State, arrayN, hashN int) *table {
@@ -75,6 +80,17 @@ func newTable(state *State, arrayN, hashN int) *table {
 		t.hash = make(map[Value]Value)
 	}
 	return &t
+}
+
+func newTableFromTable(state *State, x *table) *table {
+	if state==x.state{
+		return x
+	}
+	t := newTable(state, 0, 0)
+	t.hash = x.hash
+	t.list = x.list
+	t.meta = newTableFromTable(state, x.meta)
+	return t
 }
 
 func (t *table) set(k, v Value) {
@@ -101,8 +117,11 @@ func (t *table) set(k, v Value) {
 }
 
 func (t *table) get(k Value) Value {
+	if t==nil{
+		return NIL
+	}
 	if IsNone(k) {
-		return None
+		return NIL
 	}
 	if n, ok := k.(Number); ok {
 		i := arrayIndex(n) - 1
@@ -111,10 +130,13 @@ func (t *table) get(k Value) Value {
 			return t.list[i]
 		}
 	}
+	if t.hash==nil{
+		return NIL
+	}
 	if v, ok := t.hash[k]; ok {
 		return v
 	}
-	return None
+	return NIL
 }
 
 func (t *table) getStr(key string) Value {

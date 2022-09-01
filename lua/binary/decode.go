@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-func decode(r *bytes.Buffer, c *Chunk) {
+func decode(r *bytes.Buffer, c *Chunk, source string) {
 	var h Header
 	must(binary.Read(r, order, &h))
 
@@ -28,13 +28,16 @@ func decode(r *bytes.Buffer, c *Chunk) {
 	must(err)
 
 	// decode container closure prototype
-	decodePrototype(r, &c.Entry)
+	decodePrototype(r, &c.Entry, source)
 }
 
-func decodePrototype(r *bytes.Buffer, proto *Prototype) {
+func decodePrototype(r *bytes.Buffer, proto *Prototype, source string) {
 	// decode source name string (b[0] == length)
 	// b[0] == 0xFF ? uint64 : size
 	proto.Source = decodeString(r)
+	if proto.Source==""{
+		proto.Source = source
+	}
 
 	// decode line start
 	must(binary.Read(r, order, &proto.SrcPos))
@@ -106,7 +109,7 @@ func decodePrototype(r *bytes.Buffer, proto *Prototype) {
 		proto.Protos = make([]Prototype, num)
 		for i := range proto.Protos {
 			var fn Prototype
-			decodePrototype(r, &fn)
+			decodePrototype(r, &fn, proto.Source)
 			proto.Protos[i] = fn
 		}
 	}

@@ -108,7 +108,7 @@ func (upval *UpValue) AtIndex() int  { return int(upval.Index) }
 
 func IsChunk(data []byte) bool { return len(data) > 4 && string(data[:4]) == LUA_SIGNATURE }
 
-func Load(data []byte) (chunk Chunk, err error) {
+func Load(source string, data []byte) (chunk Chunk, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if e, ok := r.(error); ok {
@@ -119,7 +119,7 @@ func Load(data []byte) (chunk Chunk, err error) {
 			}
 		}
 	}()
-	decode(bytes.NewBuffer(data), &chunk)
+	decode(bytes.NewBuffer(data), &chunk, source)
 	return chunk, err
 }
 
